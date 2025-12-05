@@ -8,7 +8,68 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from .common import OUTPUT_DIR
 
-# generic functions
+def plot_pie(
+        df: pd.DataFrame,
+        col: str,
+        df_name: str | None = None,
+        title: str | None = None,
+        figsize: tuple | None = (5,5),
+        dpi: int | None = 150,
+        save: bool | None = True,
+        show: bool | None = True,
+        label_map: dict | None = None,
+        colors: list | None = None
+    ):
+    """
+    Plot a clean, professional pie chart for categorical data.
+
+    Args:
+        df          : input dataframe
+        col         : column name to plot
+        df_name     : output file prefix for saving
+        title       : title of the plot
+        figsize     : figure size (width, height)
+        dpi         : figure resolution
+        save        : whether to save the figure
+        show        : whether to display the figure
+        label_map   : optional dictionary to map values to labels
+        colors      : optional list of colors for the pie segments
+    """
+    counts = df[col].value_counts().sort_index()
+    labels = counts.index.tolist()
+    if label_map:
+        labels = [label_map.get(l, l) for l in labels]
+    values = counts.values.tolist()
+
+    # highlight small categories with explode
+    explode = [0.05 if v/np.sum(values) < 0.15 else 0 for v in values]
+
+    plt.figure(figsize=figsize, dpi=dpi)
+    wedges, texts, autotexts = plt.pie(
+        values,
+        labels=labels,
+        autopct=lambda p: f'{p:.1f}%' if p > 1 else '',
+        startangle=90,
+        counterclock=False,
+        explode=explode,
+        colors=colors or ["#4C72B0", "#DD8452"],
+        wedgeprops=dict(edgecolor='w')
+    )
+
+    for t in texts + autotexts:
+        t.set_fontsize(10)
+
+    plt.title(title or f"{df_name}_{col}" if df_name else f"{col}", fontsize=12)
+    plt.axis('equal')
+
+    if save:
+        fname = f"{df_name}_{col}.png" if df_name else f"{col}.png"
+        plt.savefig(Path(OUTPUT_DIR)/fname, dpi=dpi)
+    if show:
+        plt.show()
+    plt.close()
+
+
 def plot_hist(df: pd.DataFrame,
               col: str,
               df_name: str | None = None,
@@ -70,6 +131,7 @@ def plot_bin_rate(
         title: str | None = None,
         xlabel: str | None = None,
         ylabel: str | None = "Bankruptcy Rate",
+        label_map: dict | None = None,  
         figsize: tuple = (8,5),
         dpi: int = 200,
         save: bool = True,
@@ -87,6 +149,7 @@ def plot_bin_rate(
         title       : plot title
         xlabel      : x-axis label
         ylabel      : y-axis label
+        label_map   : optional dict mapping bin intervals to labels
         figsize     : figure size
         dpi         : figure dpi
         save        : save the figure or not
@@ -95,17 +158,20 @@ def plot_bin_rate(
     df = df.copy()
     
     # Create bins
-    if isinstance(bins, int):
-        df['bin'] = pd.cut(df[col], bins=bins)
-    else:
-        df['bin'] = pd.cut(df[col], bins=bins)
+    df['bin'] = pd.cut(df[col], bins=bins)
     
     # Calculate bankruptcy rate per bin
     rate = df.groupby('bin', observed=True)[target_col].mean().reset_index()
     
+    # Apply label mapping if provided
+    if label_map:
+        rate['bin_label'] = rate['bin'].map(label_map)
+    else:
+        rate['bin_label'] = rate['bin'].astype(str)
+    
     # Plot
     plt.figure(figsize=figsize)
-    ax = sns.barplot(x='bin', y=target_col, data=rate, color='#DD8452')
+    ax = sns.barplot(x='bin_label', y=target_col, data=rate, color='#DD8452')
     plt.xticks(rotation=45)
     plt.xlabel(xlabel or col)
     plt.ylabel(ylabel)
