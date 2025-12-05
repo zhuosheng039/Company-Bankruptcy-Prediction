@@ -180,16 +180,6 @@ def plot_corr_with_target(
         plt.show()
     plt.close()
 
-
-
-
-
-
-
-
-
-
-
 def plot_bankrupt_features(
         df: pd.DataFrame,
         target_col: str = "bankrupt",
