@@ -6,7 +6,10 @@ import seaborn as sns
 from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.metrics import accuracy_score, f1_score, recall_score, confusion_matrix, classification_report
+from sklearn.tree import DecisionTreeClassifier, plot_tree
 from .common import OUTPUT_DIR
+import shap
 
 def plot_pie(
         df: pd.DataFrame,
@@ -14,7 +17,7 @@ def plot_pie(
         df_name: str | None = None,
         title: str | None = None,
         figsize: tuple | None = (5,5),
-        dpi: int | None = 150,
+        dpi: int | None = 135,
         save: bool | None = True,
         show: bool | None = True,
         label_map: dict | None = None,
@@ -68,7 +71,6 @@ def plot_pie(
     if show:
         plt.show()
     plt.close()
-
 
 def plot_hist(df: pd.DataFrame,
               col: str,
@@ -500,7 +502,7 @@ def plot_pca(
 
     unique_classes = sorted(y.unique())
     
-    colors = ["#4C72B0", "#DD8452"][:len(unique_classes)]
+    colors = ["#491D7D", "#EDED74"][:len(unique_classes)]
     cmap = ListedColormap(colors)
 
     # Plot
@@ -517,3 +519,255 @@ def plot_pca(
     if show:
         plt.show()
     plt.close()
+
+def plot_classification_report(
+    y_true: pd.Series | np.ndarray,
+    y_pred: pd.Series | np.ndarray,
+    title: str | None = None,
+    figsize: tuple[int,int] = (7,5),
+    dpi: int | None = 100,
+    save: bool | None = True,
+    show: bool | None = True,
+    labels_map: dict | None = None,
+    palette: dict | None = None
+) -> None:
+    """
+    Plot per-class precision, recall, f1-score as a horizontal bar chart.
+
+    Args:
+        y_true    : true labels
+        y_pred    : predicted labels
+        title     : plot title
+        figsize   : figure size
+        dpi       : figure dpi
+        save      : whether to save figure
+        show      : whether to display figure
+        labels_map: dict to rename class labels
+        palette   : dict of colors for precision/recall/f1
+    """
+    report_dict = classification_report(
+        y_true,
+        y_pred,
+        output_dict=True,
+        digits=3,
+        labels=[0,1],
+        zero_division=0
+    )
+    report_df = pd.DataFrame(report_dict).T
+
+    for c in ['0','1']:
+        if c not in report_df.index:
+            report_df.loc[c] = {'precision':0,'recall':0,'f1-score':0,'support':0}
+    report_df = report_df.loc[['0','1']]
+
+    plot_df = report_df.reset_index().melt(
+        id_vars='index',
+        value_vars=['precision','recall','f1-score'],
+        var_name='Metric',
+        value_name='Score'
+    )
+
+    plot_df.loc[
+        plot_df['index'].isin(['0', '1']),
+        'index'
+    ] = plot_df.loc[
+        plot_df['index'].isin(['0', '1']),
+        'index'
+    ].astype(int)
+
+    if labels_map:
+        plot_df['index'] = plot_df['index'].map(labels_map).fillna(plot_df['index'])
+
+    default_palette = {'precision':'#3498db', 'recall':'#9b59b6', 'f1-score':'#f39c12'}
+    palette = palette or default_palette
+
+    sns.set_style("whitegrid")
+    plt.figure(figsize=figsize, dpi=dpi)
+    ax = sns.barplot(data=plot_df, x='Score', y='index', hue='Metric', palette=palette, dodge=True)
+    ax.set_xlabel("Score")
+    ax.set_ylabel("Class")
+    ax.set_xlim(0,1)
+    ax.set_title(title or "Classification Report")
+
+    for p in ax.patches:
+        width = p.get_width()
+        ax.annotate(f"{width:.2f}", (width, p.get_y() + p.get_height()/2),
+                    ha='left', va='center', fontsize=9)
+
+    if save:
+        fname = f"{title}_classification_report.png" if title else "classification_report.png"
+        plt.savefig(OUTPUT_DIR / fname, dpi=dpi, bbox_inches='tight')
+    if show:
+        plt.show()
+    plt.close()
+
+def plot_confusion_matrix(
+    y_true: pd.Series | np.ndarray,
+    y_pred: pd.Series | np.ndarray,
+    title: str | None = None,
+    figsize: tuple[int,int] = (6,5),
+    dpi: int | None = 130,
+    save: bool | None = True,
+    show: bool | None = True,
+    labels_map: dict | None = None,
+    cmap: str = "Reds"
+) -> None:
+    """
+    Plot confusion matrix 
+
+    Args:
+        y_true    : true labels
+        y_pred    : predicted labels
+        title     : plot title
+        figsize   : figure size
+        dpi       : figure dpi
+        save      : whether to save figure
+        show      : whether to display figure
+        labels_map: dict to rename class labels
+        cmap      : colormap for heatmap
+    """
+    cm = confusion_matrix(y_true, y_pred, labels=[0,1])
+    cm_rates = cm.astype(float) / cm.sum(axis=1)[:, np.newaxis]
+
+    labels = [labels_map.get(i, i) for i in [0,1]] if labels_map else [0,1]
+
+    plt.figure(figsize=figsize, dpi=dpi)
+    sns.heatmap(cm_rates, annot=True, fmt=".2f", cmap=cmap,
+                xticklabels=labels, yticklabels=labels)
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
+    plt.title(title or "Confusion Matrix")
+    plt.tight_layout()
+
+    if save:
+        fname = f"{title}_confusion_matrix.png" if title else "confusion_matrix.png"
+        plt.savefig(OUTPUT_DIR / fname, dpi=dpi, bbox_inches='tight')
+
+    if show:
+        plt.show()
+
+    plt.close()
+
+def plot_grouped(
+    df: pd.DataFrame,
+    group_col: str,
+    count_col: str,
+    df_name: str | None = None,
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = "Count",
+    figsize: tuple[int,int] | None = (8,5),
+    dpi: int | None = 200,
+    save: bool | None = True,
+    show: bool | None = True,
+    show_pct: bool | None = False,
+    colors: list[str] | None = None
+) -> None:
+    """
+    Plot a grouped bar chart for two categorical columns, each group in group_col is split by count_col.
+
+    Args:
+        df        : input dataframe
+        group_col : column used as the main group (e.g., Altman prediction)
+        count_col : column used to split bars within each group (e.g., actual bankrupt)
+        df_name   : file prefix when saving
+        title     : plot title
+        xlabel    : x-axis label
+        ylabel    : y-axis label
+        figsize   : figure size
+        dpi       : figure resolution
+        save      : whether to save figure
+        show      : whether to display figure
+        show_pct  : display percentage instead of raw counts
+        colors    : optional list of colors for the bars
+    """
+    plt.figure(figsize=figsize)
+    
+    # create a crosstab
+    ct = pd.crosstab(df[group_col], df[count_col])
+    
+    # convert to proportion
+    if show_pct:
+        ct = ct.div(ct.sum(axis=1), axis=0) * 100
+        ylabel = "Percentage (%)"
+    
+    ct.plot(kind="bar", stacked=False, color=colors, figsize=figsize, width=0.7)
+    
+    plt.title(title or (f"{df_name}_{group_col}_vs_{count_col}" if df_name else f"{group_col} vs {count_col}"))
+    plt.xlabel(xlabel or group_col)
+    plt.ylabel(ylabel)
+    plt.xticks(rotation=0)
+    
+    if save:
+        fname = f"{df_name}_{group_col}_vs_{count_col}.png" if df_name else f"{group_col}_vs_{count_col}.png"
+        plt.savefig(OUTPUT_DIR / fname, dpi=dpi, bbox_inches='tight')
+    if show:
+        plt.show()
+    plt.close()
+
+def plot_shap(model, X_train: pd.DataFrame):
+    """
+    Global SHAP feature importance bar plot.
+    """
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X_train)
+
+    shap_abs_mean = np.abs(shap_values[:, :, 1]).mean(axis=0)
+    importance_df = pd.DataFrame({
+        "feature": X_train.columns,
+        "importance": shap_abs_mean
+    }).sort_values("importance", ascending=False)
+
+    plt.figure(figsize=(8, 10))
+    plt.barh(
+        importance_df["feature"],
+        importance_df["importance"]
+    )
+    plt.gca().invert_yaxis()  
+    plt.xlabel("Mean |SHAP value|")
+    plt.title("Global SHAP Feature Importance (Class 1)")
+
+    plt.tight_layout()
+    plt.show()
+    plt.savefig(OUTPUT_DIR / "shap_global_importance.png", dpi=200)
+    plt.close()
+
+
+def plot_shap_summary_class(model, X_train: pd.DataFrame):
+    """
+    SHAP summary plot for class 1 (Bankrupt)
+    """
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X_train)
+    
+    shap_matrix = shap_values[:, :, 1]
+    
+    plt.figure(figsize=(8,6))
+
+    shap.summary_plot(shap_matrix, X_train, show=True)
+    plt.savefig(OUTPUT_DIR / "shap_summary_class1.png", dpi=200)
+    plt.close()
+
+def plot_decision_tree(
+    model: DecisionTreeClassifier,
+    feature_names: list[str],
+    class_names: list[str],
+    figsize: tuple[int, int] = (12, 8),
+    dpi: int = 200
+) -> None:
+    """
+    Plot and save a trained Decision Tree.
+    """
+    plt.figure(figsize=figsize)
+    plot_tree(
+        model,
+        feature_names=feature_names,
+        class_names=class_names,
+        filled=True,
+        rounded=True,
+        fontsize=12
+    )
+    plt.savefig(OUTPUT_DIR / "decision_tree.png", dpi=200)
+    plt.show()
+    plt.close()
+
